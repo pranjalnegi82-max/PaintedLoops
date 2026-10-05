@@ -15,11 +15,11 @@ exports.sendOrderConfirmation = async (email, name, orderNumber, total) => {
   await transporter.sendMail({
     from:    `"PaintedLoops 🌸" <${process.env.EMAIL_USER}>`,
     to:      email,
-    subject: `Order Confirmed! #${orderNumber} — PaintedLoops`,
+    subject: `Order Received! #${orderNumber} — PaintedLoops`,
     html: `
       <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:32px;background:#FDF6F0;border-radius:12px">
         <h2 style="color:#C8506A;font-family:Georgia,serif">PaintedLoops 🌸</h2>
-        <h3>Hi ${name}, your order is confirmed! 🎉</h3>
+        <h3>Hi ${name}, we received your order! 🎉</h3>
         <p>Thank you for shopping with us. Your handcrafted items are being lovingly prepared.</p>
         <div style="background:#fff;border-radius:8px;padding:16px;margin:20px 0">
           <p><strong>Order Number:</strong> ${orderNumber}</p>
@@ -38,9 +38,9 @@ exports.sendOwnerNotification = async (orderNumber, total, customerName, custome
 
   const itemRows = items.map(i =>
     `<tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #f0e0e0">${i.product_name}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f0e0e0">${i._name || i.product_name}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #f0e0e0;text-align:center">${i.quantity}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #f0e0e0;text-align:right">₹${i.subtotal}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f0e0e0;text-align:right">₹${i._price != null ? (i._price * i.quantity).toFixed(2) : i.subtotal}</td>
     </tr>`
   ).join('');
 
@@ -106,7 +106,7 @@ exports.sendCancellationNotification = async (orderNumber, name, email, total) =
           <p><strong>Amount:</strong> ₹${total}</p>
           <p><strong>Status:</strong> Cancelled</p>
         </div>
-        <p style="color:#9A7A85;font-size:0.85rem">If you paid online, your refund will be processed within 5-7 business days.</p>
+        <p style="color:#9A7A85;font-size:0.85rem">If you paid online, please contact the shop to confirm your refund status.</p>
         <p>Made with ❤️ — PaintedLoops</p>
       </div>`,
   });

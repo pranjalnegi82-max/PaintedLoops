@@ -1,3 +1,4 @@
+const { HttpError, integer, money, pagination } = require('../utils/validation');
 const db = require('../config/db');
 
 // GET /api/products  — list with filters
@@ -6,9 +7,7 @@ exports.getProducts = async (req, res) => {
     const category = req.query.category || null;
     const search = req.query.search || null;
     const sort = req.query.sort || null;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = pagination(req.query);
 
     let where = ['p.is_active = 1'];
     let params = [];
@@ -34,7 +33,7 @@ exports.getProducts = async (req, res) => {
 
     res.json({ success: true, total, page, pages: Math.ceil(total / limit), products });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Product operation failed.' });
   }
 };
 
@@ -55,7 +54,7 @@ exports.getProduct = async (req, res) => {
     );
     res.json({ success: true, product: rows[0], reviews });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Product operation failed.' });
   }
 };
 
@@ -63,6 +62,7 @@ exports.getProduct = async (req, res) => {
 exports.createProduct = async (req, res) => {
   try {
     const { category_id, name, description, price, old_price, stock, badge, image_url } = req.body;
+    validateProduct(req.body);
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const [result] = await db.execute(
       'INSERT INTO products (category_id,name,slug,description,price,old_price,stock,badge,image_url) VALUES (?,?,?,?,?,?,?,?,?)',
@@ -70,7 +70,7 @@ exports.createProduct = async (req, res) => {
     );
     res.status(201).json({ success: true, message: 'Product created.', id: result.insertId });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Product operation failed.' });
   }
 };
 
@@ -78,13 +78,14 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { name, description, price, old_price, stock, badge, image_url, is_active, category_id } = req.body;
+    validateProduct(req.body);
     await db.execute(
       `UPDATE products SET category_id=?,name=?,description=?,price=?,old_price=?,stock=?,badge=?,image_url=?,is_active=? WHERE id=?`,
       [category_id, name, description, price, old_price||null, stock, badge||null, image_url||null, is_active??1, req.params.id]
     );
     res.json({ success: true, message: 'Product updated.' });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Product operation failed.' });
   }
 };
 
@@ -94,7 +95,7 @@ exports.deleteProduct = async (req, res) => {
     await db.execute('UPDATE products SET is_active=0 WHERE id=?', [req.params.id]);
     res.json({ success: true, message: 'Product deactivated.' });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Product operation failed.' });
   }
 };
 
@@ -102,23 +103,45 @@ exports.deleteProduct = async (req, res) => {
 exports.addReview = async (req, res) => {
   try {
     const { rating, comment, photo_url } = req.body;
-    const product_id = req.params.id;
+    const product_id = integer(req.params.id, 'Product ID');
+    integer(rating, 'Rating', 1, 5);
+    if (comment != null && (typeof comment !== 'string' || comment.length > 5000)) throw new HttpError(400, 'Review comment is too long.');
+    if (photo_url) imageUrl(photo_url);
+    const [[product]] = await db.execute('SELECT id FROM products WHERE id=? AND is_active=1', [product_id]);
+    if (!product) throw new HttpError(404, 'Product not found.');
     await db.execute(
-      `INSERT INTO reviews (product_id, user_id, rating, comment, photo_url) 
-       VALUES (?, ?, ?, ?, ?) 
-       ON DUPLICATE KEY UPDATE rating=?, comment=?, photo_url=?`,
+      `INSERT INTO reviews (product_id, user_id, rating, comment, photo_url)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE rating=?, comment=?, photo_url=?, is_approved=1`,
       [product_id, req.user.id, rating, comment, photo_url || null, rating, comment, photo_url || null]
     );
     // Recalculate product rating
     await db.execute(
-      `UPDATE products p SET 
-        rating=(SELECT AVG(rating) FROM reviews WHERE product_id=?), 
-        review_count=(SELECT COUNT(*) FROM reviews WHERE product_id=?) 
+      `UPDATE products p SET
+        rating=(SELECT AVG(rating) FROM reviews WHERE product_id=? AND is_approved=1),
+        review_count=(SELECT COUNT(*) FROM reviews WHERE product_id=? AND is_approved=1)
        WHERE p.id=?`,
       [product_id, product_id, product_id]
     );
     res.json({ success: true, message: 'Review submitted!' });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Product operation failed.' });
   }
 };
+
+function imageUrl(value) {
+  if (typeof value !== 'string' || value.length > 500) throw new HttpError(400, 'Invalid image URL.');
+  if (/^\/uploads\/[a-zA-Z0-9_./-]+$/.test(value) && !value.includes('..')) return;
+  try { const u = new URL(value); if (u.protocol === 'https:' && !u.username && !u.password) return; } catch (_) {}
+  throw new HttpError(400, 'Images must use HTTPS or a local /uploads/ path.');
+}
+function validateProduct(product) {
+  if (typeof product.name !== 'string' || !product.name.trim() || product.name.length > 200) throw new HttpError(400, 'Product name is required (maximum 200 characters).');
+  integer(product.category_id, 'Category ID');
+  const price = money(product.price);
+  if (price === 0) throw new HttpError(400, 'Price must be greater than zero.');
+  if (product.old_price != null && product.old_price !== '' && money(product.old_price, 'Original price') < price) throw new HttpError(400, 'Original price cannot be below the selling price.');
+  integer(product.stock ?? 0, 'Stock', 0, 2147483647);
+  if (product.image_url) imageUrl(product.image_url);
+  if (product.is_active != null && ![0,1,true,false].includes(product.is_active)) throw new HttpError(400, 'Invalid active flag.');
+}

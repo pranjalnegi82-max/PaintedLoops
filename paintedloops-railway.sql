@@ -120,6 +120,8 @@ CREATE TABLE reviews (
   rating      TINYINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
   comment     TEXT,
   is_verified BOOLEAN DEFAULT FALSE,
+  photo_url VARCHAR(500),
+  is_approved BOOLEAN DEFAULT TRUE,
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY unique_review (product_id, user_id),
   FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
@@ -131,10 +133,9 @@ CREATE TABLE reviews (
 -- ════════════════════════════════════════════
 
 -- ─── ADMIN USER ──────────────────────────────
--- Password: PaintedLoops@27
-INSERT INTO users (first_name, last_name, email, phone, password_hash, role, is_verified) VALUES
-('Monika', 'Admin', 'paintedloops003@gmail.com', '9389917876',
- '$2a$10$uvQOejCOpFJ6a2mBg0yBvOYBSJu.y1sKufXsiV21oWtKW6OCLpcfC', 'admin', TRUE);
+
+-- Create the first admin through a separate, private provisioning step.
+-- Never distribute a seeded administrator password or password hash.
 
 -- ─── CATEGORIES ──────────────────────────────
 INSERT INTO categories (name, slug, description) VALUES
@@ -213,3 +214,6 @@ FROM categories c
 LEFT JOIN products p ON p.category_id = c.id
 GROUP BY c.id, c.name
 ORDER BY c.id;
+
+-- Ratings must come from real reviews, not illustrative seed counts.
+UPDATE products SET rating=0, review_count=0;

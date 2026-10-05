@@ -2,36 +2,44 @@ const db       = require('../config/db');
 const mailer   = require('../utils/mailer');
 const whatsapp = require('../utils/whatsapp');
 
-const genOrderNumber = () => 'PL-' + Date.now().toString().slice(-6) + Math.floor(Math.random()*100);
+const crypto = require('crypto');
+const { HttpError, integer, money, pagination, items: validateItems } = require('../utils/validation');
+const genOrderNumber = () => 'PL-' + crypto.randomBytes(8).toString('hex');
 
 // POST /api/orders  (protected)
 exports.createOrder = async (req, res) => {
-  const conn = await db.getConnection();
+  let conn;
   try {
+    conn = await db.getConnection();
     await conn.beginTransaction();
-    const { address_id, items, payment_method, razorpay_order_id } = req.body;
-
-    if (!items?.length) return res.status(400).json({ success: false, message: 'No items in order.' });
+    const { payment_method } = req.body;
+    const address_id = integer(req.body.address_id, 'Address ID');
+    const items = validateItems(req.body.items);
+    if (!['card','upi','netbanking','cod','phonepe','gpay'].includes(payment_method)) throw new HttpError(400, 'Invalid payment method.');
+    const [[address]] = await conn.execute('SELECT id FROM addresses WHERE id=? AND user_id=?', [address_id, req.user.id]);
+    if (!address) throw new HttpError(400, 'Select one of your saved addresses.');
 
     // Validate stock & calculate totals
     let subtotal = 0;
     for (const item of items) {
-      const [[p]] = await conn.execute('SELECT id,name,price,stock FROM products WHERE id=? AND is_active=1', [item.product_id]);
-      if (!p) throw new Error(`Product ${item.product_id} not found.`);
-      if (p.stock < item.quantity) throw new Error(`"${p.name}" has only ${p.stock} items in stock.`);
-      item._price = p.price;
+      const [[p]] = await conn.execute('SELECT id,name,price,stock FROM products WHERE id=? AND is_active=1 FOR UPDATE', [item.product_id]);
+      if (!p) throw new HttpError(400, `Product ${item.product_id} not found.`);
+      if (p.stock < item.quantity) throw new HttpError(409, `"${p.name}" has only ${p.stock} items in stock.`);
+      item._price = money(p.price) / 100;
       item._name  = p.name;
-      subtotal += p.price * item.quantity;
+      subtotal += money(p.price) * item.quantity;
     }
 
-    const shipping = payment_method === 'cod' ? 50 : 50;
-    const total    = subtotal + shipping;
+    const shipping = money(process.env.SHIPPING_CHARGE || '50', 'Shipping charge') / 100;
+    const total = (subtotal + money(shipping)) / 100;
+    money(total, 'Order total');
+    subtotal /= 100;
     const order_number = genOrderNumber();
 
     const [orderResult] = await conn.execute(
       `INSERT INTO orders (order_number,user_id,address_id,subtotal,shipping_charge,total_amount,payment_method,razorpay_order_id)
        VALUES (?,?,?,?,?,?,?,?)`,
-      [order_number, req.user.id, address_id, subtotal, shipping, total, payment_method, razorpay_order_id||null]
+      [order_number, req.user.id, address_id, subtotal, shipping, total, payment_method, null]
     );
     const order_id = orderResult.insertId;
 
@@ -44,10 +52,11 @@ exports.createOrder = async (req, res) => {
       await conn.execute('UPDATE products SET stock=stock-? WHERE id=?', [item.quantity, item.product_id]);
     }
 
+    const [[user]] = await conn.execute('SELECT email,first_name,last_name,phone FROM users WHERE id=?', [req.user.id]);
     await conn.commit();
 
-    // Send confirmation email (non-blocking)
-    const [[user]] = await db.execute('SELECT email,first_name,last_name,phone FROM users WHERE id=?', [req.user.id]);    mailer.sendOrderConfirmation(user.email, user.first_name, order_number, total).catch(err => console.error('Customer email error:', err.message));
+    // Send order receipt (payment may still be pending)
+        mailer.sendOrderConfirmation(user.email, user.first_name, order_number, total).catch(err => console.error('Customer email error:', err.message));
 
     // Notify shop owner about new order
     const customerName = `${user.first_name} ${user.last_name}`;
@@ -58,10 +67,10 @@ exports.createOrder = async (req, res) => {
 
     res.status(201).json({ success: true, message: 'Order placed!', order_number, order_id, total });
   } catch (err) {
-    await conn.rollback();
-    res.status(500).json({ success: false, message: err.message });
+    if (conn) await conn.rollback();
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Order operation failed.' });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 };
 
@@ -76,7 +85,7 @@ exports.getMyOrders = async (req, res) => {
     );
     res.json({ success: true, orders });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Order operation failed.' });
   }
 };
 
@@ -88,15 +97,15 @@ exports.getOrder = async (req, res) => {
     const [items] = await db.execute('SELECT * FROM order_items WHERE order_id=?', [order.id]);
     res.json({ success: true, order: { ...order, items } });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Order operation failed.' });
   }
 };
 
 // GET /api/orders/admin/all  (admin)
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
+    const { status } = req.query;
+    const { limit, offset } = pagination(req.query);
     let where = []; let params = [];
     if (status) { where.push('o.status=?'); params.push(status); }
     const cond = where.length ? 'WHERE ' + where.join(' AND ') : '';
@@ -107,10 +116,8 @@ const [orders] = await db.execute(
   params
 );
 res.json({ success: true, orders });
-    
-    res.json({ success: true, orders });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Order operation failed.' });
   }
 };
 
@@ -118,33 +125,35 @@ res.json({ success: true, orders });
 exports.updateOrderStatus = async (req, res) => {
   try {
     const { status } = req.body;
-    await db.execute('UPDATE orders SET status=? WHERE id=?', [status, req.params.id]);
+    const transitions = { pending: ['confirmed'], confirmed: ['processing'], processing: ['shipped'], shipped: ['delivered'] };
+    const id = integer(req.params.id, 'Order ID');
+    const [result] = await db.execute("UPDATE orders SET status=? WHERE id=? AND status=? AND (payment_method='cod' OR payment_status='paid')", [status, id, Object.keys(transitions).find(key => transitions[key].includes(status)) || 'invalid']);
+    if (!result.affectedRows) throw new HttpError(409, 'Invalid order status transition or unpaid order.');
     res.json({ success: true, message: `Order status updated to "${status}".` });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Order operation failed.' });
   }
 };
 
 // PUT /api/orders/:id/cancel  (protected — customer cancels own order)
 exports.cancelOrder = async (req, res) => {
-  const conn = await db.getConnection();
+  let conn;
   try {
+    conn = await db.getConnection();
     await conn.beginTransaction();
 
     // Fetch order and verify ownership
     const [[order]] = await conn.execute(
-      'SELECT * FROM orders WHERE id=? AND user_id=?',
+      'SELECT * FROM orders WHERE id=? AND user_id=? FOR UPDATE',
       [req.params.id, req.user.id]
     );
-    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (!order) throw new HttpError(404, 'Order not found.');
+    if (order.payment_status === 'paid') throw new HttpError(409, 'Paid orders require a refund review. Contact the shop to cancel.');
 
     // Only allow cancel if pending or confirmed
     const cancellable = ['pending', 'confirmed'];
     if (!cancellable.includes(order.status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Order cannot be cancelled. Current status: "${order.status}". Only pending or confirmed orders can be cancelled.`
-      });
+      throw new HttpError(409, 'Only pending or confirmed orders can be cancelled.');
     }
 
     // Update order status to cancelled
@@ -165,10 +174,10 @@ exports.cancelOrder = async (req, res) => {
       );
     }
 
+    const [[user]] = await conn.execute('SELECT email, first_name FROM users WHERE id=?', [req.user.id]);
     await conn.commit();
 
     // Notify owner (non-blocking)
-    const [[user]] = await db.execute('SELECT email, first_name FROM users WHERE id=?', [req.user.id]);
     mailer.sendCancellationNotification(
       order.order_number,
       user.first_name,
@@ -181,9 +190,9 @@ exports.cancelOrder = async (req, res) => {
 
     res.json({ success: true, message: 'Order cancelled successfully. Stock has been restored.' });
   } catch (err) {
-    await conn.rollback();
-    res.status(500).json({ success: false, message: err.message });
+    if (conn) await conn.rollback();
+    res.status(err.status || 500).json({ success: false, message: err.status ? err.message : 'Order operation failed.' });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 };
