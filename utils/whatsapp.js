@@ -53,7 +53,7 @@ exports.sendCustomerOrderWhatsApp = async (customerPhone, customerName, orderNum
   let phone = customerPhone.replace(/\s+/g, '').replace(/[^0-9+]/g, '');
   if (!phone.startsWith('+')) phone = '+91' + phone;
 
-  const message = `🌸 *PaintedLoops — Order Confirmed!*
+  const message = `🌸 *PaintedLoops — Order Received!*
 
 Hi ${customerName}! 🎉
 
@@ -63,7 +63,7 @@ Your order has been successfully placed.
 💰 *Total:* ₹${total}
 
 🔍 *Track your order here:*
-https://paintedloop.netlify.app/paintedloops-orders.html
+https://paintedloop.in/paintedloops-orders.html
 
 Thank you for shopping with PaintedLoops! 🧶❤️`;
 

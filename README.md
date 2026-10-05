@@ -26,7 +26,7 @@ npm install
 ### 5. Setup the database
 Open MySQL Workbench or MySQL terminal and run:
 ```bash
-mysql -u root -p < database.sql
+mysql -u root -p < paintedloops-railway.sql
 ```
 
 ### 6. Configure environment
@@ -41,14 +41,14 @@ Edit `.env` with your values:
 
 ### 7. Start the server
 ```bash
-# Development (auto-restart)
+# Development
 npm run dev
 
 # Production
 npm start
 ```
 
-Server runs at: **http://https://paintedloops-backend.onrender.com**
+Server runs at: **https://paintedloops-backend.onrender.com**
 
 ---
 
@@ -134,7 +134,7 @@ Server runs at: **http://https://paintedloops-backend.onrender.com**
 ```
 paintedloops-backend/
 ├── server.js           ← Entry point
-├── database.sql        ← MySQL schema + seed data
+├── paintedloops-railway.sql        ← MySQL schema + seed data
 ├── .env.example        ← Environment template
 ├── config/
 │   └── db.js           ← MySQL connection
@@ -158,3 +158,20 @@ paintedloops-backend/
 ---
 
 Made with ❤️ for PaintedLoops
+
+## Checkout contract and deployment
+
+1. Create a store order with `address_id`, `payment_method`, and product IDs/quantities.
+2. For online payment, call `/api/payment/create-order` with the returned store `order_id`. The API calculates the amount from the database; a client-supplied amount is not accepted.
+3. Use the returned Razorpay order in Checkout, then send the store order ID and Razorpay response to `/api/payment/verify`. Only captured payments with matching amounts are accepted; enable automatic capture in the payment account.
+4. For COD, call `/api/payment/cod-confirm` with the store order ID.
+
+Existing storefronts must adopt step 2 before deploying this API change. Paid-order cancellation requires shop review; automatic refunds are not implemented. Stock is reserved when an order is created; abandoned-order expiry and payment webhooks remain follow-up work.
+
+For an existing database, back it up and apply `migrations/001_review_fields.sql` once, checking for existing columns first. Do not import the seed SQL over a live store. No existing prices or product images are changed by this migration.
+
+Product images accept HTTPS URLs or `/uploads/` paths. Bundled photos are served from the backend's `/uploads/images/` directory. A separately hosted storefront must resolve relative image paths against the API origin. Persistent storage is required for newly uploaded images; no upload endpoint currently exists.
+
+Run `npm test` for regression checks. Database and payment integration still require a staging database and Razorpay test credentials.
+
+The seed SQL does not create an administrator. Register an account, then promote that verified account using a private database administration session. Never publish administrator credentials.
