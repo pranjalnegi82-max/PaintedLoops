@@ -1,6 +1,8 @@
 const express = require('express');
 const cors    = require('cors');
 const dotenv  = require('dotenv');
+const path = require('node:path');
+const serveFrontend = require('./utils/serveFrontend');
 dotenv.config();
 
 const app = express();
@@ -13,12 +15,13 @@ app.use(cors({
     'https://paintedloop.netlify.app',
     'https://admin-paintedloops.netlify.app',
     'https://paintedloops.pranjalnegi82.workers.dev',
-    'http://localhost:3000'
+    'http://localhost:3000',
+    ...(process.env.FRONTEND_URLS || '').split(',').map(url => url.trim()).filter(Boolean)
   ],
   credentials: true
 }));app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ── Routes ─────────────────────────────────────
 const authRoutes    = require('./routes/auth');
@@ -33,7 +36,7 @@ app.use('/api/addresses', addrRouter);
 app.use('/api/admin',     adminRouter);
 
 // ── Health check ───────────────────────────────
-app.get('/', (req, res) => res.json({
+app.get(['/healthz', '/api'], (req, res) => res.json({
   success: true,
   message: '🌸 PaintedLoops API is running!',
   version: '1.0.0',
@@ -47,6 +50,9 @@ app.get('/', (req, res) => res.json({
   }
 }));
 
+// Serve the built React app and support direct visits to client-side routes.
+serveFrontend(app, path.join(__dirname, 'frontend', 'dist'));
+
 // ── 404 handler ────────────────────────────────
 app.use((req, res) => res.status(404).json({ success: false, message: `Route ${req.originalUrl} not found.` }));
 
@@ -58,7 +64,7 @@ app.use((err, req, res, next) => {
 
 // ── Start ──────────────────────────────────────
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🌸 PaintedLoops Server running on http://localhost:${PORT}`);
   console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}\n`);
 });

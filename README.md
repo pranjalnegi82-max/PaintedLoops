@@ -1,3 +1,9 @@
+# PaintedLoops — full-stack storefront
+
+The repaired React storefront is in `frontend/`. The Express API remains at the repository root. Render can host both on one web service. See [RENDER.md](RENDER.md) for the exact deployment settings and remaining backend requirements. Online payment remains disabled in the frontend pending the backend payment fixes.
+
+---
+
 # 🌸 PaintedLoops — Backend API
 
 Node.js + Express + MySQL backend for the PaintedLoops e-commerce store.
