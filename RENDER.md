@@ -60,3 +60,13 @@ npm --prefix frontend run lint
 For the controlled browser smoke test, run `npm --prefix frontend run dev` and then `npm --prefix frontend run test:smoke` in another terminal after installing Chromium with `npx --prefix frontend playwright install chromium`. These fixtures do not create real orders.
 
 Render references: https://render.com/docs/deploy-node-express-app and https://render.com/docs/blueprint-spec
+
+## Aiven free MySQL connection
+
+Use the Aiven service's Host, Port, User, Password and Database name in the corresponding DB_* variables. The port is provider-specific, not necessarily 3306. Set DB_SSL=true. From Aiven Overview → Connection information → CA certificate → Show, copy the full PEM certificate (including BEGIN/END CERTIFICATE lines) into the Render environment variable DB_SSL_CA. Both real newlines and literal \\n separators are supported. This backend verifies the CA chain and server hostname; verification is never disabled.
+
+Keep the existing JWT_SECRET. Save the environment values together and redeploy. A successful connection does not create tables: import the shop schema into the selected database separately. Do not run DROP statements against an existing database. No database import was performed by this SSL configuration change.
+
+A platform trial banner does not identify the service's plan. Confirm that the MySQL service itself uses the Free plan under its service settings. Aiven documents that free services can coexist with trial credits.
+
+Run `node --test tests/dbOptions.test.js` to verify the SSL configuration rules without contacting a database.
